@@ -144,7 +144,7 @@ jobs:
         if: ${{ env.build_needed == 'true' }}
         run: |
           image="${{ steps.set_container_tag.outputs.container_image }}"
-          docker buildx build --platform linux/amd64,linux/arm64 -t ${image} --push .
+          docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t ${image} --push .
 
   build_linux_python_lib:
     name: Build Python wheels for Linux (${{ matrix.arch.name }})
@@ -159,6 +159,8 @@ jobs:
             runner: ubuntu-24.04
           - name: aarch64
             runner: ubuntu-24.04-arm
+          - name: armv7
+            runner: ubuntu-24.04
 
     runs-on: ${{ matrix.arch.runner }}
     permissions:
@@ -189,25 +191,55 @@ jobs:
       - name: Bootstrap
         run: bash scripts/bootstrap.sh -p all,linux
       - name: Setup Build, Run Build and Run Tests
+        env:
+          CC: ${{ matrix.arch.name == 'armv7' && 'arm-linux-gnueabihf-gcc' || '' }}
+          CXX: ${{ matrix.arch.name == 'armv7' && 'arm-linux-gnueabihf-g++' || '' }}
+          AR: ${{ matrix.arch.name == 'armv7' && 'arm-linux-gnueabihf-ar' || '' }}
+          STRIP: ${{ matrix.arch.name == 'armv7' && 'arm-linux-gnueabihf-strip' || '' }}
         run: |
-          scripts/build/gn_gen.sh --args=" \
-                                          chip_project_config_include_dirs=[\"//..\"] \
-                                          chip_crypto=\"boringssl\" \
-                                          enable_rtti=true \
-                                          chip_config_memory_debug_checks=false \
-                                          chip_config_memory_debug_dmalloc=false \
-                                          chip_exchange_node_id_logging=true \
-                                          chip_mdns=\"minimal\" \
-                                          chip_minmdns_default_policy=\"libnl\" \
-                                          chip_python_version=\"${{ needs.build_prepare.outputs.version }}\"  \
-                                          chip_python_package_prefix=\"home-assistant-chip\" \
-                                          chip_python_platform_tag=\"manylinux_2_31\" \
-                                          chip_code_pre_generated_directory=\"$(pwd)/zzz_pregenerated\" \
-                                          "
+          if [ "${{ matrix.arch.name }}" = "armv7" ]; then
+            scripts/build/gn_gen.sh --args=" \
+                                            target_cpu=\"arm\" \
+                                            arm_arch=\"armv7-a\" \
+                                            arm_fpu=\"vfpv3-d16\" \
+                                            arm_float_abi=\"softfp\" \
+                                            chip_project_config_include_dirs=[\"//..\"] \
+                                            chip_crypto=\"boringssl\" \
+                                            enable_rtti=true \
+                                            chip_config_memory_debug_checks=false \
+                                            chip_config_memory_debug_dmalloc=false \
+                                            chip_exchange_node_id_logging=true \
+                                            chip_mdns=\"minimal\" \
+                                            chip_minmdns_default_policy=\"libnl\" \
+                                            chip_python_version=\"${{ needs.build_prepare.outputs.version }}\"  \
+                                            chip_python_package_prefix=\"home-assistant-chip\" \
+                                            chip_python_platform_tag=\"linux_armv7l\" \
+                                            chip_code_pre_generated_directory=\"$(pwd)/zzz_pregenerated\" \
+                                            "
+          else
+            scripts/build/gn_gen.sh --args=" \
+                                            chip_project_config_include_dirs=[\"//..\"] \
+                                            chip_crypto=\"boringssl\" \
+                                            enable_rtti=true \
+                                            chip_config_memory_debug_checks=false \
+                                            chip_config_memory_debug_dmalloc=false \
+                                            chip_exchange_node_id_logging=true \
+                                            chip_mdns=\"minimal\" \
+                                            chip_minmdns_default_policy=\"libnl\" \
+                                            chip_python_version=\"${{ needs.build_prepare.outputs.version }}\"  \
+                                            chip_python_package_prefix=\"home-assistant-chip\" \
+                                            chip_python_platform_tag=\"manylinux_2_31\" \
+                                            chip_code_pre_generated_directory=\"$(pwd)/zzz_pregenerated\" \
+                                            "
+          fi
           scripts/run_in_build_env.sh "ninja -C ./out chip-repl"
       - name: Run Python library specific unit tests
         run: |
-          scripts/run_in_build_env.sh 'pip3 install ./out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-manylinux_2_31_${{ matrix.arch.name }}.whl'
+          if [ "${{ matrix.arch.name }}" = "armv7" ]; then
+            scripts/run_in_build_env.sh 'pip3 install ./out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-linux_armv7l.whl'
+          else
+            scripts/run_in_build_env.sh 'pip3 install ./out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-manylinux_2_31_${{ matrix.arch.name }}.whl'
+          fi
           scripts/run_in_build_env.sh 'pip3 install ./out/controller/python/home_assistant_chip_clusters-${{ needs.build_prepare.outputs.version }}-py3-none-any.whl'
           scripts/run_in_build_env.sh 'pip3 install ./out/controller/python/home_assistant_chip_repl-${{ needs.build_prepare.outputs.version }}-py3-none-any.whl'
           scripts/run_in_build_env.sh '(cd src/controller/python/test/unit_tests/ && python3 -m unittest -v)'
@@ -230,7 +262,11 @@ jobs:
         run: |
           python3 -m pip install twine build
           python3 -m twine upload out/controller/python/home_assistant_chip_clusters-${{ needs.build_prepare.outputs.version }}-py3-none-any.whl --skip-existing
-          python3 -m twine upload out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-manylinux_2_31_${{ matrix.arch.name }}.whl --skip-existing
+          if [ "${{ matrix.arch.name }}" = "armv7" ]; then
+            python3 -m twine upload out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-linux_armv7l.whl --skip-existing
+          else
+            python3 -m twine upload out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-manylinux_2_31_${{ matrix.arch.name }}.whl --skip-existing
+          fi
           python3 -m twine upload out/controller/python/home_assistant_chip_repl-${{ needs.build_prepare.outputs.version }}-py3-none-any.whl --skip-existing
       - name: Upload wheels to Test PyPI
         if: ${{ github.ref == 'refs/heads/main' }}
@@ -241,7 +277,11 @@ jobs:
         run: |
           python3 -m pip install twine build
           python3 -m twine upload out/controller/python/home_assistant_chip_clusters-${{ needs.build_prepare.outputs.version }}-py3-none-any.whl --skip-existing
-          python3 -m twine upload out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-manylinux_2_31_${{ matrix.arch.name }}.whl --skip-existing
+          if [ "${{ matrix.arch.name }}" = "armv7" ]; then
+            python3 -m twine upload out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-linux_armv7l.whl --skip-existing
+          else
+            python3 -m twine upload out/controller/python/home_assistant_chip_core-${{ needs.build_prepare.outputs.version }}-cp37-abi3-manylinux_2_31_${{ matrix.arch.name }}.whl --skip-existing
+          fi
           python3 -m twine upload out/controller/python/home_assistant_chip_repl-${{ needs.build_prepare.outputs.version }}-py3-none-any.whl --skip-existing
 
   build_macos_python_lib:

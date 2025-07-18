@@ -24,4 +24,6 @@ RUN set -x \
     libcairo2-dev libgirepository1.0-dev \
     libdbus-1-dev \
     python3-dev \
-    zstd
+    zstd \
+    gcc-arm-linux-gnueabihf \
+    g++-arm-linux-gnueabihf
